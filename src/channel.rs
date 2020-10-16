@@ -28,7 +28,10 @@ pub use crate::grpc_sys::{
 
 /// Ref: http://www.grpc.io/docs/guides/wire.html#user-agents
 fn format_user_agent_string(agent: &str) -> CString {
-    let version = env!("CARGO_PKG_VERSION");
+    //let version = env!("CARGO_PKG_VERSION");
+    // ANDROID's build system doesn't support environment variables
+    // so we hardcode the package version here.
+    let version = "0.6.0";
     let trimed_agent = agent.trim();
     let val = if trimed_agent.is_empty() {
         format!("grpc-rust/{}", version)
