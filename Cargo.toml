@@ -13,7 +13,7 @@
 [package]
 edition = "2018"
 name = "grpcio"
-version = "0.6.0"
+version = "0.7.0"
 authors = ["The TiKV Project Developers"]
 autoexamples = false
 description = "The rust language implementation of gRPC, base on the gRPC c core library."
@@ -36,7 +36,7 @@ optional = true
 version = "0.3"
 
 [dependencies.grpcio-sys]
-version = "0.6.0"
+version = "0.7"
 
 [dependencies.libc]
 version = "0.2"
@@ -45,7 +45,7 @@ version = "0.2"
 version = "0.4"
 
 [dependencies.parking_lot]
-version = "0.10"
+version = "0.11"
 
 [dependencies.prost]
 version = "0.6"
