@@ -14,6 +14,7 @@ use parking_lot::Mutex;
 use std::future::Future;
 
 use super::{ShareCall, ShareCallHolder, SinkBase, WriteFlags};
+use crate::buf::GrpcSlice;
 use crate::call::{check_run, Call, MessageReader, Method};
 use crate::channel::Channel;
 use crate::codec::{DeserializeFn, SerializeFn};
@@ -108,14 +109,13 @@ impl Call {
         mut opt: CallOption,
     ) -> Result<ClientUnaryReceiver<Resp>> {
         let call = channel.create_call(method, &opt)?;
-        let mut payload = vec![];
+        let mut payload = GrpcSlice::default();
         (method.req_ser())(req, &mut payload);
         let cq_f = check_run(BatchType::CheckRead, |ctx, tag| unsafe {
             grpc_sys::grpcwrap_call_start_unary(
                 call.call,
                 ctx,
-                payload.as_ptr() as *const _,
-                payload.len(),
+                payload.as_mut_ptr(),
                 opt.write_flags.flags,
                 opt.headers
                     .as_mut()
@@ -162,14 +162,13 @@ impl Call {
         mut opt: CallOption,
     ) -> Result<ClientSStreamReceiver<Resp>> {
         let call = channel.create_call(method, &opt)?;
-        let mut payload = vec![];
+        let mut payload = GrpcSlice::default();
         (method.req_ser())(req, &mut payload);
         let cq_f = check_run(BatchType::Finish, |ctx, tag| unsafe {
             grpc_sys::grpcwrap_call_start_server_streaming(
                 call.call,
                 ctx,
-                payload.as_ptr() as _,
-                payload.len(),
+                payload.as_mut_ptr(),
                 opt.write_flags.flags,
                 opt.headers
                     .as_mut()
@@ -331,6 +330,19 @@ impl<Req> StreamingCallSink<Req> {
         }
     }
 
+    /// By default it always sends messages with their configured buffer hint. But when the
+    /// `enhance_batch` is enabled, messages will be batched together as many as possible.
+    /// The rules are listed as below:
+    /// - All messages except the last one will be sent with `buffer_hint` set to true.
+    /// - The last message will also be sent with `buffer_hint` set to true unless any message is
+    ///    offered with buffer hint set to false.
+    ///
+    /// No matter `enhance_batch` is true or false, it's recommended to follow the contract of
+    /// Sink and call `poll_flush` to ensure messages are handled by gRPC C Core.
+    pub fn enhance_batch(&mut self, flag: bool) {
+        self.sink_base.enhance_buffer_strategy = flag;
+    }
+
     pub fn cancel(&mut self) {
         let call = self.call.lock();
         call.call.cancel()
@@ -373,7 +385,8 @@ impl<Req> Sink<(Req, WriteFlags)> for StreamingCallSink<Req> {
             let mut call = self.call.lock();
             call.check_alive()?;
         }
-        Pin::new(&mut self.sink_base).poll_ready(cx)
+        let t = &mut *self;
+        Pin::new(&mut t.sink_base).poll_flush(cx, &mut t.call)
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>> {

@@ -561,13 +561,27 @@ impl Server {
     pub fn bind_addrs(&self) -> impl ExactSizeIterator<Item = (&String, u16)> {
         self.core.binders.iter().map(|b| (&b.host, b.port))
     }
+
+    /// Add an rpc channel for an established connection represented as a file
+    /// descriptor. Takes ownership of the file descriptor, closing it when
+    /// channel is closed.
+    ///
+    /// # Safety
+    ///
+    /// The file descriptor must correspond to a connected stream socket. After
+    /// this call, the socket must not be accessed (read / written / closed)
+    /// by other code.
+    #[cfg(unix)]
+    pub unsafe fn add_insecure_channel_from_fd(&self, fd: ::std::os::raw::c_int) {
+        grpc_sys::grpc_server_add_insecure_channel_from_fd(self.core.server, ptr::null_mut(), fd)
+    }
 }
 
 impl Drop for Server {
     fn drop(&mut self) {
         // if the server is not shutdown completely, destroy a server will core.
         // TODO: don't wait here
-        let f = if self.core.shutdown.load(Ordering::SeqCst) {
+        let f = if !self.core.shutdown.load(Ordering::SeqCst) {
             Some(self.shutdown())
         } else {
             None
