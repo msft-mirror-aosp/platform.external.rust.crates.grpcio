@@ -16,14 +16,11 @@ use futures::task::{Context, Poll};
 use libc::c_void;
 use parking_lot::Mutex;
 
-use crate::buf::{GrpcByteBuffer, GrpcByteBufferReader};
+use crate::buf::{GrpcByteBuffer, GrpcByteBufferReader, GrpcSlice};
 use crate::codec::{DeserializeFn, Marshaller, SerializeFn};
 use crate::error::{Error, Result};
 use crate::grpc_sys::grpc_status_code::*;
 use crate::task::{self, BatchFuture, BatchType, CallTag};
-
-// By default buffers in `SinkBase` will be shrink to 4K size.
-const BUF_SHRINK_SIZE: usize = 4 * 1024;
 
 /// An gRPC status code structure.
 /// This type contains constants for all gRPC status codes.
@@ -296,7 +293,7 @@ impl Call {
     /// Send a message asynchronously.
     pub fn start_send_message(
         &mut self,
-        msg: &[u8],
+        msg: &mut GrpcSlice,
         write_flags: u32,
         initial_meta: bool,
     ) -> Result<BatchFuture> {
@@ -306,8 +303,7 @@ impl Call {
             grpc_sys::grpcwrap_call_send_message(
                 self.call,
                 ctx,
-                msg.as_ptr() as _,
-                msg.len(),
+                msg.as_mut_ptr(),
                 write_flags,
                 i,
                 tag,
@@ -350,20 +346,21 @@ impl Call {
         &mut self,
         status: &RpcStatus,
         send_empty_metadata: bool,
-        payload: &Option<Vec<u8>>,
+        payload: &mut Option<GrpcSlice>,
         write_flags: u32,
     ) -> Result<BatchFuture> {
         let _cq_ref = self.cq.borrow()?;
         let send_empty_metadata = if send_empty_metadata { 1 } else { 0 };
-        let (payload_ptr, payload_len) = payload
-            .as_ref()
-            .map_or((ptr::null(), 0), |b| (b.as_ptr(), b.len()));
         let f = check_run(BatchType::Finish, |ctx, tag| unsafe {
             let details_ptr = status
                 .details
                 .as_ref()
                 .map_or_else(ptr::null, |s| s.as_ptr() as _);
             let details_len = status.details.as_ref().map_or(0, String::len);
+            let payload_p = match payload {
+                Some(p) => p.as_mut_ptr(),
+                None => ptr::null_mut(),
+            };
             grpc_sys::grpcwrap_call_send_status_from_server(
                 self.call,
                 ctx,
@@ -372,8 +369,7 @@ impl Call {
                 details_len,
                 ptr::null_mut(),
                 send_empty_metadata,
-                payload_ptr as _,
-                payload_len,
+                payload_p,
                 write_flags,
                 tag,
             )
@@ -407,8 +403,7 @@ impl Call {
                 details_len,
                 ptr::null_mut(),
                 1,
-                ptr::null(),
-                0,
+                ptr::null_mut(),
                 0,
                 tag_ptr as *mut c_void,
             )
@@ -628,17 +623,30 @@ impl WriteFlags {
 
 /// A helper struct for constructing Sink object for batch requests.
 struct SinkBase {
+    // Batch job to be executed in `poll_ready`.
     batch_f: Option<BatchFuture>,
-    buf: Vec<u8>,
     send_metadata: bool,
+    // Flag to indicate if enhance batch strategy. This behavior will modify the `buffer_hint` to batch
+    // messages as much as possible.
+    enhance_buffer_strategy: bool,
+    // Buffer used to store the data to be sent, send out the last data in this round of `start_send`.
+    buffer: GrpcSlice,
+    // Write flags used to control the data to be sent in `buffer`.
+    buf_flags: Option<WriteFlags>,
+    // Used to records whether a message in which `buffer_hint` is false exists.
+    // Note: only used in enhanced buffer strategy.
+    last_buf_hint: bool,
 }
 
 impl SinkBase {
     fn new(send_metadata: bool) -> SinkBase {
         SinkBase {
             batch_f: None,
-            buf: Vec::new(),
+            buffer: GrpcSlice::default(),
+            buf_flags: None,
+            last_buf_hint: true,
             send_metadata,
+            enhance_buffer_strategy: false,
         }
     }
 
@@ -646,29 +654,35 @@ impl SinkBase {
         &mut self,
         call: &mut C,
         t: &T,
-        mut flags: WriteFlags,
+        flags: WriteFlags,
         ser: SerializeFn<T>,
     ) -> Result<()> {
-        // `start_send` is supposed to be called after `poll_ready` returns ready.
-        assert!(self.batch_f.is_none());
+        // temporary fix: buffer hint with send meta will not send out any metadata.
+        // note: only the first message can enter this code block.
+        if self.send_metadata {
+            ser(t, &mut self.buffer);
+            self.buf_flags = Some(flags);
+            self.start_send_buffer_message(false, call)?;
+            self.send_metadata = false;
+            return Ok(());
+        }
 
-        self.buf.clear();
-        ser(t, &mut self.buf);
-        if flags.get_buffer_hint() && self.send_metadata {
-            // temporary fix: buffer hint with send meta will not send out any metadata.
-            flags = flags.buffer_hint(false);
+        // If there is already a buffered message waiting to be sent, set `buffer_hint` to true to indicate
+        // that this is not the last message.
+        if self.buf_flags.is_some() {
+            self.start_send_buffer_message(true, call)?;
         }
-        let write_f = call.call(|c| {
-            c.call
-                .start_send_message(&self.buf, flags.flags, self.send_metadata)
-        })?;
-        // NOTE: Content of `self.buf` is copied into grpc internal.
-        if self.buf.capacity() > BUF_SHRINK_SIZE {
-            self.buf.truncate(BUF_SHRINK_SIZE);
-            self.buf.shrink_to_fit();
+
+        ser(t, &mut self.buffer);
+        let hint = flags.get_buffer_hint();
+        self.last_buf_hint &= hint;
+        self.buf_flags = Some(flags);
+
+        // If sink disable batch, start sending the message in buffer immediately.
+        if !self.enhance_buffer_strategy {
+            self.start_send_buffer_message(hint, call)?;
         }
-        self.batch_f = Some(write_f);
-        self.send_metadata = false;
+
         Ok(())
     }
 
@@ -682,5 +696,45 @@ impl SinkBase {
         }
         self.batch_f.take();
         Poll::Ready(Ok(()))
+    }
+
+    #[inline]
+    fn poll_flush<C: ShareCallHolder>(
+        &mut self,
+        cx: &mut Context,
+        call: &mut C,
+    ) -> Poll<Result<()>> {
+        if self.batch_f.is_some() {
+            ready!(self.poll_ready(cx)?);
+        }
+        if self.buf_flags.is_some() {
+            self.start_send_buffer_message(self.last_buf_hint, call)?;
+            ready!(self.poll_ready(cx)?);
+        }
+        self.last_buf_hint = true;
+        Poll::Ready(Ok(()))
+    }
+
+    #[inline]
+    fn start_send_buffer_message<C: ShareCallHolder>(
+        &mut self,
+        buffer_hint: bool,
+        call: &mut C,
+    ) -> Result<()> {
+        // `start_send` is supposed to be called after `poll_ready` returns ready.
+        assert!(self.batch_f.is_none());
+
+        let mut flags = self.buf_flags.clone().unwrap();
+        flags = flags.buffer_hint(buffer_hint);
+        let write_f = call.call(|c| {
+            c.call
+                .start_send_message(&mut self.buffer, flags.flags, self.send_metadata)
+        })?;
+        self.batch_f = Some(write_f);
+        if !self.buffer.is_inline() {
+            self.buffer = GrpcSlice::default();
+        }
+        self.buf_flags.take();
+        Ok(())
     }
 }
