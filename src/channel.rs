@@ -28,7 +28,7 @@ pub use crate::grpc_sys::{
 
 /// Ref: http://www.grpc.io/docs/guides/wire.html#user-agents
 fn format_user_agent_string(agent: &str) -> CString {
-    let version = "0.7.0";
+    let version = "0.7.1";
     let trimed_agent = agent.trim();
     let val = if trimed_agent.is_empty() {
         format!("grpc-rust/{}", version)

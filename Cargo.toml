@@ -13,7 +13,7 @@
 [package]
 edition = "2018"
 name = "grpcio"
-version = "0.7.0"
+version = "0.7.1"
 authors = ["The TiKV Project Developers"]
 autoexamples = false
 description = "The rust language implementation of gRPC, base on the gRPC c core library."
