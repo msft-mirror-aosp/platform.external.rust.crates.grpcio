@@ -717,7 +717,7 @@ impl SinkBase {
         // temporary fix: buffer hint with send meta will not send out any metadata.
         // note: only the first message can enter this code block.
         if self.send_metadata {
-            ser(t, &mut self.buffer);
+            ser(t, &mut self.buffer)?;
             self.buf_flags = Some(flags);
             self.start_send_buffer_message(false, call)?;
             self.send_metadata = false;
@@ -730,7 +730,7 @@ impl SinkBase {
             self.start_send_buffer_message(true, call)?;
         }
 
-        ser(t, &mut self.buffer);
+        ser(t, &mut self.buffer)?;
         let hint = flags.get_buffer_hint();
         self.last_buf_hint &= hint;
         self.buf_flags = Some(flags);
@@ -781,7 +781,7 @@ impl SinkBase {
         // `start_send` is supposed to be called after `poll_ready` returns ready.
         assert!(self.batch_f.is_none());
 
-        let mut flags = self.buf_flags.clone().unwrap();
+        let mut flags = self.buf_flags.unwrap();
         flags = flags.buffer_hint(buffer_hint);
         let write_f = call.call(|c| {
             c.call
