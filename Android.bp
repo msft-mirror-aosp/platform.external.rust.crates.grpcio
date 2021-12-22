@@ -38,4 +38,9 @@ rust_library {
         "libparking_lot",
         "libprotobuf",
     ],
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.bluetooth",
+    ],
+    min_sdk_version: "29",
 }
