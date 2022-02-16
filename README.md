@@ -44,7 +44,7 @@ For Windows, you also need to install following software:
 ## Build
 
 ```
-$ cargo xtask submodule # if you just cloned the repository
+$ ./scripts/reset-submodule.cmd # if you just cloned the repository
 $ cargo build
 ```
 
@@ -142,5 +142,5 @@ Make sure to format and test the code before sending a PR.
 If the content in grpc-sys/grpc is updated, you may need to regenerate bindings:
 
 ```
-$ cargo xtask bindgen
+$ ./scripts/generate-bindings.sh
 ```
