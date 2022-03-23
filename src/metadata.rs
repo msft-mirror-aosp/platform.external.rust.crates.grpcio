@@ -7,8 +7,6 @@ use std::{mem, slice, str};
 
 use crate::error::{Error, Result};
 
-const BINARY_ERROR_DETAILS_KEY: &str = "grpc-status-details-bin";
-
 fn normalize_key(key: &str, binary: bool) -> Result<Cow<'_, str>> {
     if key.is_empty() {
         return Err(Error::InvalidMetadata(
@@ -107,13 +105,6 @@ impl MetadataBuilder {
     pub fn add_bytes(&mut self, key: &str, value: &[u8]) -> Result<&mut MetadataBuilder> {
         let key = normalize_key(key, true)?;
         Ok(self.add_metadata(&key, value))
-    }
-
-    /// Set binary error details to support rich error model.
-    ///
-    /// See also https://grpc.io/docs/guides/error/#richer-error-model.
-    pub(crate) fn set_binary_error_details(&mut self, value: &[u8]) -> &mut MetadataBuilder {
-        self.add_metadata(BINARY_ERROR_DETAILS_KEY, value)
     }
 
     /// Create `Metadata` with configured entries.
@@ -222,16 +213,6 @@ impl Metadata {
             capacity: cap,
             metadata: p,
         })
-    }
-
-    /// Search for binary error details.
-    pub(crate) fn search_binary_error_details(&self) -> &[u8] {
-        for (k, v) in self.iter() {
-            if k == BINARY_ERROR_DETAILS_KEY {
-                return v;
-            }
-        }
-        &[]
     }
 }
 
