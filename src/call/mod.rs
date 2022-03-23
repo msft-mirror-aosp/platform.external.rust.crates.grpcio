@@ -8,8 +8,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::{ptr, slice};
 
+use crate::cq::CompletionQueue;
 use crate::grpc_sys::{self, grpc_call, grpc_call_error, grpcwrap_batch_context};
-use crate::{cq::CompletionQueue, Metadata, MetadataBuilder};
 use futures::future::Future;
 use futures::ready;
 use futures::task::{Context, Poll};
@@ -156,15 +156,10 @@ impl<Req, Resp> Method<Req, Resp> {
 #[derive(Debug, Clone)]
 pub struct RpcStatus {
     /// gRPC status code. `Ok` indicates success, all other values indicate an error.
-    code: RpcStatusCode,
+    pub status: RpcStatusCode,
 
-    /// error message.
-    message: String,
-
-    /// Additional details for rich error model.
-    ///
-    /// See also https://grpc.io/docs/guides/error/#richer-error-model.
-    details: Vec<u8>,
+    /// Optional detail string.
+    pub details: Option<String>,
 }
 
 impl Display for RpcStatus {
@@ -175,54 +170,16 @@ impl Display for RpcStatus {
 
 impl RpcStatus {
     /// Create a new [`RpcStatus`].
-    pub fn new<T: Into<RpcStatusCode>>(code: T) -> RpcStatus {
-        RpcStatus::with_message(code, String::new())
-    }
-
-    /// Create a new [`RpcStatus`] with given message.
-    pub fn with_message<T: Into<RpcStatusCode>>(code: T, message: String) -> RpcStatus {
-        RpcStatus::with_details(code, message, vec![])
-    }
-
-    /// Create a new [`RpcStats`] with code, message and details.
-    ///
-    /// If using rich error model, `details` should be binary message that sets `code` and
-    /// `message` to the same value. Or you can use `into` method to do automatical
-    /// transformation if using `grpcio_proto::google::rpc::Status`.
-    pub fn with_details<T: Into<RpcStatusCode>>(
-        code: T,
-        message: String,
-        details: Vec<u8>,
-    ) -> RpcStatus {
+    pub fn new<T: Into<RpcStatusCode>>(code: T, details: Option<String>) -> RpcStatus {
         RpcStatus {
-            code: code.into(),
-            message,
+            status: code.into(),
             details,
         }
     }
 
     /// Create a new [`RpcStatus`] that status code is Ok.
     pub fn ok() -> RpcStatus {
-        RpcStatus::new(RpcStatusCode::OK)
-    }
-
-    /// Return the instance's error code.
-    #[inline]
-    pub fn code(&self) -> RpcStatusCode {
-        self.code
-    }
-
-    /// Return the instance's error message.
-    #[inline]
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-
-    /// Return the (binary) error details.
-    ///
-    /// Usually it contains a serialized `google.rpc.Status` proto.
-    pub fn details(&self) -> &[u8] {
-        &self.details
+        RpcStatus::new(RpcStatusCode::OK, None)
     }
 }
 
@@ -259,26 +216,21 @@ impl BatchContext {
             grpc_sys::grpcwrap_batch_context_recv_status_on_client_status(self.ctx)
         });
 
-        if status == RpcStatusCode::OK {
-            RpcStatus::ok()
+        let details = if status == RpcStatusCode::OK {
+            None
         } else {
             unsafe {
-                let mut msg_len = 0;
+                let mut details_len = 0;
                 let details_ptr = grpc_sys::grpcwrap_batch_context_recv_status_on_client_details(
                     self.ctx,
-                    &mut msg_len,
+                    &mut details_len,
                 );
-                let msg_slice = slice::from_raw_parts(details_ptr as *const _, msg_len);
-                let message = String::from_utf8_lossy(msg_slice).into_owned();
-                let m_ptr =
-                    grpc_sys::grpcwrap_batch_context_recv_status_on_client_trailing_metadata(
-                        self.ctx,
-                    );
-                let metadata = &*(m_ptr as *const Metadata);
-                let details = metadata.search_binary_error_details().to_vec();
-                RpcStatus::with_details(status, message, details)
+                let details_slice = slice::from_raw_parts(details_ptr as *const _, details_len);
+                Some(String::from_utf8_lossy(details_slice).into_owned())
             }
-        }
+        };
+
+        RpcStatus::new(status, details)
     }
 
     /// Fetch the response bytes of the rpc call.
@@ -400,31 +352,22 @@ impl Call {
         let _cq_ref = self.cq.borrow()?;
         let send_empty_metadata = if send_empty_metadata { 1 } else { 0 };
         let f = check_run(BatchType::Finish, |ctx, tag| unsafe {
-            let (msg_ptr, msg_len) = if status.code() == RpcStatusCode::OK {
-                (ptr::null(), 0)
-            } else {
-                (status.message.as_ptr(), status.message.len())
-            };
+            let details_ptr = status
+                .details
+                .as_ref()
+                .map_or_else(ptr::null, |s| s.as_ptr() as _);
+            let details_len = status.details.as_ref().map_or(0, String::len);
             let payload_p = match payload {
                 Some(p) => p.as_mut_ptr(),
                 None => ptr::null_mut(),
             };
-            let mut trailing_metadata = if status.details.is_empty() {
-                None
-            } else {
-                let mut builder = MetadataBuilder::new();
-                builder.set_binary_error_details(&status.details);
-                Some(builder.build())
-            };
             grpc_sys::grpcwrap_call_send_status_from_server(
                 self.call,
                 ctx,
-                status.code().into(),
-                msg_ptr as _,
-                msg_len,
-                trailing_metadata
-                    .as_mut()
-                    .map_or_else(ptr::null_mut, |m| m as *mut _ as _),
+                status.status.into(),
+                details_ptr,
+                details_len,
+                ptr::null_mut(),
                 send_empty_metadata,
                 payload_p,
                 write_flags,
@@ -447,17 +390,17 @@ impl Call {
         let (batch_ptr, tag_ptr) = box_batch_tag(tag);
 
         let code = unsafe {
-            let (msg_ptr, msg_len) = if status.code() == RpcStatusCode::OK {
-                (ptr::null(), 0)
-            } else {
-                (status.message.as_ptr(), status.message.len())
-            };
+            let details_ptr = status
+                .details
+                .as_ref()
+                .map_or_else(ptr::null, |s| s.as_ptr() as _);
+            let details_len = status.details.as_ref().map_or(0, String::len);
             grpc_sys::grpcwrap_call_send_status_from_server(
                 call_ptr,
                 batch_ptr,
-                status.code().into(),
-                msg_ptr as _,
-                msg_len,
+                status.status.into(),
+                details_ptr,
+                details_len,
                 ptr::null_mut(),
                 1,
                 ptr::null_mut(),
@@ -717,7 +660,7 @@ impl SinkBase {
         // temporary fix: buffer hint with send meta will not send out any metadata.
         // note: only the first message can enter this code block.
         if self.send_metadata {
-            ser(t, &mut self.buffer)?;
+            ser(t, &mut self.buffer);
             self.buf_flags = Some(flags);
             self.start_send_buffer_message(false, call)?;
             self.send_metadata = false;
@@ -730,7 +673,7 @@ impl SinkBase {
             self.start_send_buffer_message(true, call)?;
         }
 
-        ser(t, &mut self.buffer)?;
+        ser(t, &mut self.buffer);
         let hint = flags.get_buffer_hint();
         self.last_buf_hint &= hint;
         self.buf_flags = Some(flags);
@@ -781,7 +724,7 @@ impl SinkBase {
         // `start_send` is supposed to be called after `poll_ready` returns ready.
         assert!(self.batch_f.is_none());
 
-        let mut flags = self.buf_flags.unwrap();
+        let mut flags = self.buf_flags.clone().unwrap();
         flags = flags.buffer_hint(buffer_hint);
         let write_f = call.call(|c| {
             c.call
