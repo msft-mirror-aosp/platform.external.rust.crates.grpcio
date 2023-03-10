@@ -6,5 +6,7 @@
   "device": true,
   "features": "protobuf,protobuf-codec",
   "min-sdk-version": "29",
-  "run": true
+  "run": true,
+  "vendor-available": false,
+  "product-available": false
 }
