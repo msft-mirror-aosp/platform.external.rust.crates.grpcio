@@ -20,6 +20,7 @@ license {
 
 rust_library {
     name: "libgrpcio",
+    // has rustc warnings
     host_supported: true,
     crate_name: "grpcio",
     cargo_env_compat: true,
@@ -36,7 +37,7 @@ rust_library {
         "liblibc",
         "liblog_rust",
         "libparking_lot",
-        "libprotobuf",
+        "libprotobuf_deprecated",
     ],
     apex_available: [
         "//apex_available:platform",
