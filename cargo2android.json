@@ -2,7 +2,6 @@
   "patch": "patches/Android.bp.patch",
   "apex-available": [
     "//apex_available:platform",
-    "com.android.btservices"
   ],
   "device": true,
   "features": "protobuf,protobuf-codec",
