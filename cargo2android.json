@@ -1,12 +1,14 @@
 {
-  "patch": "patches/Android.bp.patch",
   "apex-available": [
-    "//apex_available:platform",
+    "//apex_available:platform"
   ],
   "device": true,
   "features": "protobuf,protobuf-codec",
   "min-sdk-version": "29",
   "run": true,
   "vendor-available": false,
-  "product-available": false
+  "product-available": false,
+  "dep-suffixes": {
+    "protobuf": "_deprecated"
+  }
 }
