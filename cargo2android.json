@@ -6,7 +6,7 @@
   "features": "protobuf,protobuf-codec",
   "min-sdk-version": "29",
   "run": true,
-  "vendor-available": false,
+  "vendor-available": true,
   "product-available": false,
   "dep-suffixes": {
     "protobuf": "_deprecated"
