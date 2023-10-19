@@ -5,23 +5,24 @@ mod executor;
 mod promise;
 
 use std::fmt::{self, Debug, Formatter};
+use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll, Waker};
 
-use futures::future::Future;
-use futures::task::{Context, Poll, Waker};
 use parking_lot::Mutex;
 
 use self::callback::{Abort, Request as RequestCallback, UnaryRequest as UnaryRequestCallback};
 use self::executor::SpawnTask;
 use self::promise::{Action as ActionPromise, Batch as BatchPromise};
 use crate::call::server::RequestContext;
-use crate::call::{BatchContext, Call, MessageReader};
+use crate::call::{BatchContext, Call};
 use crate::cq::CompletionQueue;
 use crate::error::{Error, Result};
 use crate::server::RequestCallContext;
 
 pub(crate) use self::executor::{Executor, Kicker, UnfinishedWork};
+pub(crate) use self::promise::BatchResult;
 pub use self::promise::BatchType;
 
 /// A handle that is used to notify future that the task finishes.
@@ -104,7 +105,7 @@ impl<T> Future for CqFuture<T> {
 }
 
 /// Future object for batch jobs.
-pub type BatchFuture = CqFuture<Option<MessageReader>>;
+pub type BatchFuture = CqFuture<BatchResult>;
 
 /// A result holder for asynchronous execution.
 // This enum is going to be passed to FFI, so don't use trait or generic here.
@@ -185,7 +186,7 @@ impl CallTag {
 impl Debug for CallTag {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match *self {
-            CallTag::Batch(ref ctx) => write!(f, "CallTag::Batch({:?})", ctx),
+            CallTag::Batch(ref ctx) => write!(f, "CallTag::Batch({ctx:?})"),
             CallTag::Request(_) => write!(f, "CallTag::Request(..)"),
             CallTag::UnaryRequest(_) => write!(f, "CallTag::UnaryRequest(..)"),
             CallTag::Abort(_) => write!(f, "CallTag::Abort(..)"),
@@ -203,7 +204,7 @@ mod tests {
 
     use super::*;
     use crate::env::Environment;
-    use futures::executor::block_on;
+    use futures_executor::block_on;
 
     #[test]
     fn test_resolve() {
