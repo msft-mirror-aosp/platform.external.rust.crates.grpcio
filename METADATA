@@ -9,11 +9,11 @@ third_party {
     type: ARCHIVE
     value: "https://static.crates.io/crates/grpcio/grpcio-0.9.1.crate"
   }
-  version: "0.9.1"
+  version: "0.12.1"
   license_type: NOTICE
   last_upgrade_date {
-    year: 2021
-    month: 9
-    day: 22
+    year: 2023
+    month: 6
+    day: 21
   }
 }

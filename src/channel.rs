@@ -21,8 +21,8 @@ use crate::env::Environment;
 use crate::error::Result;
 use crate::task::CallTag;
 use crate::task::Kicker;
-use crate::CallOption;
-use crate::ResourceQuota;
+use crate::{CallOption, ChannelCredentials};
+use crate::{ResourceQuota, RpcStatusCode};
 
 pub use crate::grpc_sys::{
     grpc_compression_algorithm as CompressionAlgorithms,
@@ -31,12 +31,12 @@ pub use crate::grpc_sys::{
 
 /// Ref: http://www.grpc.io/docs/guides/wire.html#user-agents
 fn format_user_agent_string(agent: &str) -> CString {
-    let version = "0.9.1";
+    let version = env!("CARGO_PKG_VERSION");
     let trimed_agent = agent.trim();
     let val = if trimed_agent.is_empty() {
-        format!("grpc-rust/{}", version)
+        format!("grpc-rust/{version}")
     } else {
-        format!("{} grpc-rust/{}", trimed_agent, version)
+        format!("{trimed_agent} grpc-rust/{version}")
     };
     CString::new(val).unwrap()
 }
@@ -73,6 +73,7 @@ pub enum LbPolicy {
 pub struct ChannelBuilder {
     env: Arc<Environment>,
     options: HashMap<Cow<'static, [u8]>, Options>,
+    credentials: Option<ChannelCredentials>,
 }
 
 impl ChannelBuilder {
@@ -81,6 +82,7 @@ impl ChannelBuilder {
         ChannelBuilder {
             env,
             options: HashMap::new(),
+            credentials: None,
         }
     }
 
@@ -182,10 +184,9 @@ impl ChannelBuilder {
 
     /// Set whether to allow the use of `SO_REUSEPORT` if available. Defaults to `true`.
     pub fn reuse_port(mut self, reuse: bool) -> ChannelBuilder {
-        let opt = if reuse { 1 } else { 0 };
         self.options.insert(
             Cow::Borrowed(grpcio_sys::GRPC_ARG_ALLOW_REUSEPORT),
-            Options::Integer(opt),
+            Options::Integer(reuse as i32),
         );
         self
     }
@@ -296,11 +297,43 @@ impl ChannelBuilder {
         self
     }
 
+    /// If set to zero, disables use of http proxies.
+    pub fn enable_http_proxy(mut self, num: bool) -> ChannelBuilder {
+        self.options.insert(
+            Cow::Borrowed(grpcio_sys::GRPC_ARG_ENABLE_HTTP_PROXY),
+            Options::Integer(num as i32),
+        );
+        self
+    }
+
     /// Set default compression algorithm for the channel.
     pub fn default_compression_algorithm(mut self, algo: CompressionAlgorithms) -> ChannelBuilder {
         self.options.insert(
             Cow::Borrowed(grpcio_sys::GRPC_COMPRESSION_CHANNEL_DEFAULT_ALGORITHM),
             Options::Integer(algo as i32),
+        );
+        self
+    }
+
+    /// Set default gzip compression level.
+    #[cfg(feature = "nightly")]
+    pub fn default_gzip_compression_level(mut self, level: usize) -> ChannelBuilder {
+        self.options.insert(
+            Cow::Borrowed(grpcio_sys::GRPC_ARG_GZIP_COMPRESSION_LEVEL),
+            Options::Integer(level as i32),
+        );
+        self
+    }
+
+    /// Set default grpc min message size to compression.
+    #[cfg(feature = "nightly")]
+    pub fn default_grpc_min_message_size_to_compress(
+        mut self,
+        lower_bound: usize,
+    ) -> ChannelBuilder {
+        self.options.insert(
+            Cow::Borrowed(grpcio_sys::GRPC_ARG_MIN_MESSAGE_SIZE_TO_COMPRESS),
+            Options::Integer(lower_bound as i32),
         );
         self
     }
@@ -373,6 +406,30 @@ impl ChannelBuilder {
         self
     }
 
+    /// Set use local subchannel pool
+    ///
+    /// This method allows channel use it's owned subchannel pool.
+    pub fn use_local_subchannel_pool(mut self, enable: bool) -> ChannelBuilder {
+        self.options.insert(
+            Cow::Borrowed(grpcio_sys::GRPC_ARG_USE_LOCAL_SUBCHANNEL_POOL),
+            Options::Integer(enable as i32),
+        );
+        self
+    }
+
+    /// Enables retry functionality.  Defaults to true.  When enabled, transparent
+    /// retries will be performed as appropriate, and configurable retries are
+    /// enabled when they are configured via the service config. For details, see:
+    ///   https://github.com/grpc/proposal/blob/master/A6-client-retries.md
+    /// NOTE: Hedging functionality is not yet implemented.
+    pub fn enable_retry(mut self, enable: bool) -> ChannelBuilder {
+        self.options.insert(
+            Cow::Borrowed(grpcio_sys::GRPC_ARG_ENABLE_RETRIES),
+            Options::Integer(enable as i32),
+        );
+        self
+    }
+
     /// Set a raw integer configuration.
     ///
     /// This method is only for bench usage, users should use the encapsulated API instead.
@@ -438,18 +495,21 @@ impl ChannelBuilder {
         self.build_args()
     }
 
-    /// Build an insecure [`Channel`] that connects to a specific address.
+    /// Build an [`Channel`] that connects to a specific address.
     pub fn connect(mut self, addr: &str) -> Channel {
         let args = self.prepare_connect_args();
         let addr = CString::new(addr).unwrap();
         let addr_ptr = addr.as_ptr();
+        let mut creds = self
+            .credentials
+            .unwrap_or_else(ChannelCredentials::insecure);
         let channel =
-            unsafe { grpc_sys::grpc_insecure_channel_create(addr_ptr, args.args, ptr::null_mut()) };
+            unsafe { grpcio_sys::grpc_channel_create(addr_ptr, creds.as_mut_ptr(), args.args) };
 
         unsafe { Channel::new(self.env.pick_cq(), self.env, channel) }
     }
 
-    /// Build an insecure [`Channel`] taking over an established connection from
+    /// Build an [`Channel`] taking over an established connection from
     /// a file descriptor. The target string given is purely informative to
     /// describe the endpoint of the connection. Takes ownership of the given
     /// file descriptor and will close it when the connection is closed.
@@ -466,23 +526,25 @@ impl ChannelBuilder {
         let args = self.prepare_connect_args();
         let target = CString::new(target).unwrap();
         let target_ptr = target.as_ptr();
-        let channel = grpc_sys::grpc_insecure_channel_create_from_fd(target_ptr, fd, args.args);
+        // Actually only insecure credentials are supported currently.
+        let mut creds = self
+            .credentials
+            .unwrap_or_else(ChannelCredentials::insecure);
+        let channel =
+            grpcio_sys::grpc_channel_create_from_fd(target_ptr, fd, creds.as_mut_ptr(), args.args);
 
         Channel::new(self.env.pick_cq(), self.env, channel)
     }
 }
 
-#[cfg(feature = "secure")]
+#[cfg(feature = "_secure")]
 mod secure_channel {
     use std::borrow::Cow;
     use std::ffi::CString;
-    use std::ptr;
-
-    use crate::grpc_sys;
 
     use crate::ChannelCredentials;
 
-    use super::{Channel, ChannelBuilder, Options};
+    use super::{ChannelBuilder, Options};
 
     const OPT_SSL_TARGET_NAME_OVERRIDE: &[u8] = b"grpc.ssl_target_name_override\0";
 
@@ -501,21 +563,10 @@ mod secure_channel {
             self
         }
 
-        /// Build a secure [`Channel`] that connects to a specific address.
-        pub fn secure_connect(mut self, addr: &str, mut creds: ChannelCredentials) -> Channel {
-            let args = self.prepare_connect_args();
-            let addr = CString::new(addr).unwrap();
-            let addr_ptr = addr.as_ptr();
-            let channel = unsafe {
-                grpc_sys::grpc_secure_channel_create(
-                    creds.as_mut_ptr(),
-                    addr_ptr,
-                    args.args,
-                    ptr::null_mut(),
-                )
-            };
-
-            unsafe { Channel::new(self.env.pick_cq(), self.env, channel) }
+        /// Set the credentials used to build the connection.
+        pub fn set_credentials(mut self, creds: ChannelCredentials) -> ChannelBuilder {
+            self.credentials = Some(creds);
+            self
         }
     }
 }
@@ -545,8 +596,9 @@ impl ChannelInner {
     // If try_to_connect is true, the channel will try to establish a connection, potentially
     // changing the state.
     fn check_connectivity_state(&self, try_to_connect: bool) -> ConnectivityState {
-        let should_try = if try_to_connect { 1 } else { 0 };
-        unsafe { grpc_sys::grpc_channel_check_connectivity_state(self.channel, should_try) }
+        unsafe {
+            grpc_sys::grpc_channel_check_connectivity_state(self.channel, try_to_connect as _)
+        }
     }
 }
 
@@ -570,6 +622,7 @@ pub struct Channel {
     cq: CompletionQueue,
 }
 
+#[allow(clippy::non_send_fields_in_send_ty)]
 unsafe impl Send for Channel {}
 unsafe impl Sync for Channel {}
 
@@ -590,6 +643,19 @@ impl Channel {
         Channel {
             inner: Arc::new(ChannelInner { _env: env, channel }),
             cq,
+        }
+    }
+
+    /// Create a lame channel that will fail all its operations.
+    pub fn lame(env: Arc<Environment>, target: &str) -> Channel {
+        unsafe {
+            let target = CString::new(target).unwrap();
+            let ch = grpc_sys::grpc_lame_client_channel_create(
+                target.as_ptr(),
+                RpcStatusCode::UNAVAILABLE.into(),
+                b"call on lame client\0".as_ptr() as _,
+            );
+            Self::new(env.pick_cq(), env, ch)
         }
     }
 
@@ -710,5 +776,28 @@ impl Channel {
 
     pub(crate) fn cq(&self) -> &CompletionQueue {
         &self.cq
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "nightly")]
+mod tests {
+    use crate::env::Environment;
+    use crate::ChannelBuilder;
+    use std::sync::Arc;
+
+    #[test]
+    #[cfg(feature = "nightly")]
+    fn test_grpc_min_message_size_to_compress() {
+        let env = Arc::new(Environment::new(1));
+        let cb = ChannelBuilder::new(env);
+        cb.default_grpc_min_message_size_to_compress(1);
+    }
+    #[test]
+    #[cfg(feature = "nightly")]
+    fn test_gzip_compression_level() {
+        let env = Arc::new(Environment::new(1));
+        let cb = ChannelBuilder::new(env);
+        cb.default_gzip_compression_level(1);
     }
 }

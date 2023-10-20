@@ -1,3 +1,49 @@
+# 0.12.1 - 2023-02-14
+
+- Provide more debug info for RpcStatus (#603)
+- Compile on latest stable (#605)
+- Allow accessing grpcio client and channel (#597)
+
+# 0.12.0 - 2022-11-04
+
+- Update prost to 0.11 (#595)
+- Update grpc to 1.36.5 (#593)
+- Update the security API of channel to match the C++ version (#593)
+
+Note, 1.36.5 removes the support of epollex engine (which is the default engine before),
+and enables transparent retry by default. So you may experience potential performance regression.
+And 1.36.5 is also the last version that supports C++11. Next version will requires C++14.
+
+# 0.11.0 - 2022-09-10
+
+- Update prost to 0.10 (#582)
+
+# 0.10.3 - 2022-06-27
+
+- Add support for GRPC_ARG_ENABLE_HTTP_PROXY parameter (#575)
+- Support setting gzip level (#577)
+
+# 0.10.2 - 2022-04-15
+
+- Make `ResourceQuota` cloneable (#568)
+- Allow use local subchannel pool (#565)
+
+# 0.10.1 - 2022-03-28
+
+- Fix potential UAF and double free (#566)
+
+# 0.10.0 - 2022-03-02
+
+- Update prost to 0.9.0 (#544) (#559)
+- Make `CallOption` sync (#551)
+- Update grpc c core to 1.44.0 (#549) (#558)
+- Support querying channelz by API (#550)
+- Reduce dependency on future crate (#554)
+- Support headers on all call types (#555)
+- Rename features "secure" to "boringssl" (#558)
+- Drop dependency on bindgen for both MacOS and x86_64/aarch64 Linux (#558)
+- Make health crate not depend on secure feature (#558)
+
 # 0.9.1 - 2021-09-18
 
 - Make boringssl-src optional (#537)
