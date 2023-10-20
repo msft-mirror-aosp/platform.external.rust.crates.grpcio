@@ -12,8 +12,10 @@ framework that puts mobile and HTTP/2 first. grpcio is built on [gRPC Core] and 
 
 ## Optional features
 
-- **`secure`** *(enabled by default)* - Enables support for TLS encryption and some authentication
+- **`boringssl`** *(enabled by default)* - Enables support for TLS encryption and some authentication
   mechanisms.
+- **`openssl`** - Same as `boringssl`, but base on the system openssl.
+- **`openssl-vendored`** - Same as `openssl`, but build openssl from source.
 
 */
 
@@ -21,6 +23,7 @@ framework that puts mobile and HTTP/2 first. grpcio is built on [gRPC Core] and 
 #![allow(clippy::new_without_default)]
 #![allow(clippy::cast_lossless)]
 #![allow(clippy::option_map_unit_fn)]
+#![allow(clippy::derive_partial_eq_without_eq)]
 
 use grpcio_sys as grpc_sys;
 #[macro_use]
@@ -30,6 +33,7 @@ mod auth_context;
 mod buf;
 mod call;
 mod channel;
+pub mod channelz;
 mod client;
 mod codec;
 mod cq;
@@ -38,7 +42,6 @@ mod error;
 mod log_util;
 mod metadata;
 mod quota;
-#[cfg(feature = "secure")]
 mod security;
 mod server;
 mod task;
@@ -72,11 +75,7 @@ pub use crate::error::{Error, Result};
 pub use crate::log_util::redirect_log;
 pub use crate::metadata::{Metadata, MetadataBuilder, MetadataIter};
 pub use crate::quota::ResourceQuota;
-#[cfg(feature = "secure")]
-pub use crate::security::{
-    CertificateRequestType, ChannelCredentials, ChannelCredentialsBuilder, ServerCredentials,
-    ServerCredentialsBuilder, ServerCredentialsFetcher,
-};
+pub use crate::security::*;
 pub use crate::server::{
     CheckResult, Server, ServerBuilder, ServerChecker, Service, ServiceBuilder, ShutdownFuture,
 };
