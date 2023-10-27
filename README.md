@@ -30,7 +30,7 @@ This project is still under development. The following features with the check m
 - binutils >= 2.22
 - LLVM and Clang >= 3.9 if you need to generate bindings at compile time.
 
-For Linux and MacOS, you also need to install gcc 4.9+ (or clang) too.
+For Linux and MacOS, you also need to install gcc 7.3+ (or clang 6+) too.
 
 Bindings are pre-generated for x86_64/arm64 Linux. For other platforms, bindings are generated at compile time.
 
@@ -89,7 +89,7 @@ To include this project as a dependency:
 
 ```
 [dependencies]
-grpcio = "0.12"
+grpcio = "0.13"
 ```
 
 ### Feature `boringssl`
@@ -99,7 +99,7 @@ mechanism. When you do not need it, for example when working in intranet,
 you can disable it by using the following configuration:
 ```
 [dependencies]
-grpcio = { version = "0.12", default-features = false, features = ["protobuf-codec"] }
+grpcio = { version = "0.13", default-features = false, features = ["protobuf-codec"] }
 ```
 
 ### Feature `prost-codec` and `protobuf-codec`
@@ -119,7 +119,7 @@ your `Cargo.toml`'s features list for `gprcio`, which requires openssl (>=1.0.2)
 
 ```toml
 [dependencies]
-grpcio = { version = "0.12", features = ["openssl"] }
+grpcio = { version = "0.13", features = ["openssl"] }
 ```
 
 Feature `openssl-vendored` is the same as feature `openssl` except it will build openssl from

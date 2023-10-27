@@ -20,11 +20,10 @@ license {
 
 rust_library {
     name: "libgrpcio",
-    // has rustc warnings
     host_supported: true,
     crate_name: "grpcio",
     cargo_env_compat: true,
-    cargo_pkg_version: "0.12.1",
+    cargo_pkg_version: "0.13.0",
     srcs: ["src/lib.rs"],
     edition: "2018",
     features: [
@@ -34,8 +33,8 @@ rust_library {
         "protobuf-codec",
     ],
     rustlibs: [
-        "libfutures_util",
         "libfutures_executor",
+        "libfutures_util",
         "libgrpcio_sys",
         "liblibc",
         "liblog_rust",
@@ -45,7 +44,6 @@ rust_library {
     apex_available: [
         "//apex_available:platform",
     ],
-    product_available: false,
     vendor_available: true,
     min_sdk_version: "29",
 }
