@@ -1,5 +1,6 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
+use std::ffi::CString;
 use std::{error, fmt, result};
 
 use crate::call::RpcStatus;
@@ -7,6 +8,9 @@ use crate::grpc_sys::grpc_call_error;
 
 #[cfg(feature = "protobuf-codec")]
 use protobuf::ProtobufError;
+
+#[cfg(feature = "protobufv3-codec")]
+use protobufv3::Error as ProtobufError;
 
 /// Errors generated from this library.
 #[derive(Debug)]
@@ -24,7 +28,7 @@ pub enum Error {
     /// Failed to shutdown.
     ShutdownFailed,
     /// Failed to bind.
-    BindFail(String, u16),
+    BindFail(CString),
     /// gRPC completion queue is shutdown.
     QueueShutdown,
     /// Failed to create Google default credentials.
@@ -43,7 +47,7 @@ impl fmt::Display for Error {
                     write!(fmt, "RpcFailure: {} {}", s.code(), s.message())
                 }
             }
-            other_error => write!(fmt, "{:?}", other_error),
+            other_error => write!(fmt, "{other_error:?}"),
         }
     }
 }
@@ -57,7 +61,7 @@ impl error::Error for Error {
     }
 }
 
-#[cfg(feature = "protobuf-codec")]
+#[cfg(any(feature = "protobuf-codec", feature = "protobufv3-codec"))]
 impl From<ProtobufError> for Error {
     fn from(e: ProtobufError) -> Error {
         Error::Codec(Box::new(e))

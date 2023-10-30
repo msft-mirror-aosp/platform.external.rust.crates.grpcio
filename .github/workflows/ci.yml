@@ -5,6 +5,7 @@ on:
   push:
     branches: 
     - master
+    - v0.*
   schedule:
   - cron: '0 22 * * *'
 
@@ -13,6 +14,7 @@ env:
   # Some of the bindgen tests generate "deref-nullptr" warnings, see https://github.com/rust-lang/rust-bindgen/issues/1651
   RUSTFLAGS: "--deny=warnings --allow deref-nullptr"
   TEST_BIND: 1
+  GRPC_VERBOSITY: "info"
 
 jobs:
   Linux-Format:
@@ -20,8 +22,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
-    - run: sudo apt-get install -y clang-tidy-9
-    - run: sudo update-alternatives --install /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-9 100
     - run: which cargo && cargo version && clang --version && openssl version && which cmake && cmake --version
     - run: cargo xtask submodule
     - run: cargo fmt --all -- --check
@@ -35,9 +35,6 @@ jobs:
           - host: ubuntu-latest
             profile: 
             suffix:
-          - host: ARM64
-            profile: --release
-            suffix: -Arm64
     name: Linux-Stable${{ matrix.suffix }}
     runs-on: ${{ matrix.host }}
     steps:
@@ -50,6 +47,7 @@ jobs:
     - run: cargo xtask bindgen
     - run: cargo build --no-default-features
     - run: cargo build --no-default-features --features protobuf-codec
+    - run: cargo build --no-default-features --features protobufv3-codec
     - run: cargo build --no-default-features --features prost-codec
     - run: cd proto && cargo build --no-default-features --features prost-codec
     - run: cargo build
@@ -62,9 +60,6 @@ jobs:
           - host: ubuntu-latest
             profile: 
             suffix:
-          - host: ARM64
-            profile: --release
-            suffix: -Arm64
     name: Linux-Stable-openssl${{ matrix.suffix }}
     runs-on: ${{ matrix.host }}
     steps:
@@ -81,14 +76,18 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - run: rustup default nightly
+    - run: sudo ln -s /usr/bin/llvm-symbolizer-14 /usr/bin/llvm-symbolizer
     - run: which cargo && cargo version && clang --version && openssl version
     - run: cargo xtask submodule
     - run: cargo build --no-default-features
     - run: cargo build --no-default-features --features protobuf-codec
+    - run: cargo build --no-default-features --features protobufv3-codec
     - run: cargo build --no-default-features --features prost-codec
     - run: cargo build
     - run: cargo test --all
-    - run: RUSTFLAGS="-Z sanitizer=address" cargo test --all --target x86_64-unknown-linux-gnu
+    # See https://github.com/grpc/grpc/pull/31167
+    - run: RUSTFLAGS="-Z sanitizer=address" ASAN_OPTIONS=suppressions=`pwd`/.github/workflows/31167.supp cargo test --all --target x86_64-unknown-linux-gnu
+    - run: cargo test --features "nightly"
 
   Mac:
     name: Mac
@@ -97,11 +96,15 @@ jobs:
     - uses: actions/checkout@v2
     - run: which cargo && cargo version && clang --version && openssl version
     - run: cargo xtask submodule
-    - run: cargo build --no-default-features --features use-bindgen
-    - run: cargo build --no-default-features --features "protobuf-codec use-bindgen"
-    - run: cargo build --no-default-features --features "prost-codec use-bindgen"
+    - run: env TEST_BIND=0 cargo xtask bindgen && git diff --exit-code HEAD
+    - run: cargo xtask bindgen
+    - run: cargo build --no-default-features
+    - run: cargo build --no-default-features --features "protobuf-codec"
+    - run: cargo build --no-default-features --features "protobufv3-codec"
+    - run: cargo build --no-default-features --features "prost-codec"
     - run: cargo build
     - run: cargo test --all
+    - run: cargo test --features "nightly"
 
   Mac-openssl:
     name: Mac-openssl
@@ -123,11 +126,12 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - run: choco install -y llvm
-    - run: refreshenv
+    - run: Import-Module $env:ChocolateyInstall\helpers\chocolateyProfile.psm1
     - run: go version ; cargo version ; cmake --version 
     - run: cargo xtask submodule
     - run: cargo build
     - run: cargo test --all
+    - run: cargo test --features "nightly"
   
   Pre-Release:
     name: Pre-Release
