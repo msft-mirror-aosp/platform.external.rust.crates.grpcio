@@ -3,12 +3,10 @@
     "//apex_available:platform"
   ],
   "device": true,
-  "features": "_secure,boringssl,protobuf-codec,protobuf",
+  "features": "_secure,boringssl,protobufv3-codec",
   "min-sdk-version": "29",
   "run": true,
   "vendor-available": true,
   "product-available": false,
-  "dep-suffixes": {
-    "protobuf": "_deprecated"
-  }
+  "add-module-block": "cargo2android_cfgs.bp"
 }
