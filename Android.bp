@@ -26,7 +26,7 @@ rust_library {
     crate_name: "grpcio",
     cargo_env_compat: true,
     cargo_pkg_version: "0.13.0",
-    srcs: ["src/lib.rs"],
+    crate_root: "src/lib.rs",
     edition: "2018",
     features: [
         "_secure",
