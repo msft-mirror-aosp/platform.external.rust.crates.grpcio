@@ -2,6 +2,7 @@
 
 use crate::grpc_sys::{self, grpc_metadata, grpc_metadata_array};
 use std::borrow::Cow;
+use std::fmt;
 use std::mem::ManuallyDrop;
 use std::{mem, slice, str};
 
@@ -18,18 +19,18 @@ fn normalize_key(key: &str, binary: bool) -> Result<Cow<'_, str>> {
     let mut is_upper_case = false;
     for b in key.as_bytes() {
         let b = *b;
-        if (b'A'..=b'Z').contains(&b) {
+        if b.is_ascii_uppercase() {
             is_upper_case = true;
             continue;
-        } else if (b'a'..=b'z').contains(&b)
-            || (b'0'..=b'9').contains(&b)
+        } else if b.is_ascii_lowercase()
+            || b.is_ascii_digit()
             || b == b'_'
             || b == b'-'
             || b == b'.'
         {
             continue;
         }
-        return Err(Error::InvalidMetadata(format!("key {:?} is invalid", key)));
+        return Err(Error::InvalidMetadata(format!("key {key:?} is invalid")));
     }
     let key = if is_upper_case {
         Cow::Owned(key.to_ascii_lowercase())
@@ -146,7 +147,7 @@ impl MetadataBuilder {
 ///
 /// Metadata value can be ascii string or bytes. They are distinguish by the
 /// key suffix, key of bytes value should have suffix '-bin'.
-#[repr(C)]
+#[repr(transparent)]
 pub struct Metadata(grpc_metadata_array);
 
 impl Metadata {
@@ -235,6 +236,17 @@ impl Metadata {
     }
 }
 
+impl fmt::Debug for Metadata {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.debug_map()
+            .entries(
+                self.iter()
+                    .map(|(k, v)| (k, std::str::from_utf8(v).unwrap_or("?"))),
+            )
+            .finish()
+    }
+}
+
 impl Clone for Metadata {
     fn clone(&self) -> Metadata {
         let mut builder = MetadataBuilder::with_capacity(self.len());
@@ -255,6 +267,39 @@ impl Drop for Metadata {
 }
 
 unsafe impl Send for Metadata {}
+unsafe impl Sync for Metadata {}
+
+/// A special metadata that only for receiving metadata from remote.
+///
+/// gRPC C Core manages metadata internally, it's unsafe to read them unless
+/// call is not destroyed.
+#[repr(transparent)]
+pub struct UnownedMetadata(grpc_metadata_array);
+
+impl UnownedMetadata {
+    #[inline]
+    pub fn empty() -> UnownedMetadata {
+        unsafe { mem::transmute(Metadata::with_capacity(0)) }
+    }
+    #[inline]
+    pub unsafe fn assume_valid(&self) -> &Metadata {
+        mem::transmute(self)
+    }
+
+    pub fn as_mut_ptr(&mut self) -> *mut grpc_metadata_array {
+        &mut self.0 as _
+    }
+}
+
+impl Drop for UnownedMetadata {
+    #[inline]
+    fn drop(&mut self) {
+        unsafe { grpcio_sys::grpcwrap_metadata_array_destroy_metadata_only(&mut self.0) }
+    }
+}
+
+unsafe impl Send for UnownedMetadata {}
+unsafe impl Sync for UnownedMetadata {}
 
 /// Immutable metadata iterator
 ///
@@ -327,14 +372,14 @@ mod tests {
         let mut builder = MetadataBuilder::new();
         let mut meta_kvs = vec![];
         for i in 0..5 {
-            let key = format!("K{}", i);
-            let val = format!("v{}", i);
+            let key = format!("K{i}");
+            let val = format!("v{i}");
             builder.add_str(&key, &val).unwrap();
             meta_kvs.push((key.to_ascii_lowercase(), val.into_bytes()));
         }
         for i in 5..10 {
-            let key = format!("k{}-Bin", i);
-            let val = format!("v{}", i);
+            let key = format!("k{i}-Bin");
+            let val = format!("v{i}");
             builder.add_bytes(&key, val.as_bytes()).unwrap();
             meta_kvs.push((key.to_ascii_lowercase(), val.into_bytes()));
         }

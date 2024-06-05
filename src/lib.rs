@@ -12,8 +12,10 @@ framework that puts mobile and HTTP/2 first. grpcio is built on [gRPC Core] and 
 
 ## Optional features
 
-- **`secure`** *(enabled by default)* - Enables support for TLS encryption and some authentication
+- **`boringssl`** *(enabled by default)* - Enables support for TLS encryption and some authentication
   mechanisms.
+- **`openssl`** - Same as `boringssl`, but base on the system openssl.
+- **`openssl-vendored`** - Same as `openssl`, but build openssl from source.
 
 */
 
@@ -21,15 +23,16 @@ framework that puts mobile and HTTP/2 first. grpcio is built on [gRPC Core] and 
 #![allow(clippy::new_without_default)]
 #![allow(clippy::cast_lossless)]
 #![allow(clippy::option_map_unit_fn)]
+#![allow(clippy::derive_partial_eq_without_eq)]
 
 use grpcio_sys as grpc_sys;
 #[macro_use]
 extern crate log;
 
-mod auth_context;
 mod buf;
 mod call;
 mod channel;
+pub mod channelz;
 mod client;
 mod codec;
 mod cq;
@@ -38,7 +41,6 @@ mod error;
 mod log_util;
 mod metadata;
 mod quota;
-#[cfg(feature = "secure")]
 mod security;
 mod server;
 mod task;
@@ -60,23 +62,18 @@ pub use crate::channel::{
 };
 pub use crate::client::Client;
 
-#[cfg(feature = "protobuf-codec")]
+#[cfg(any(feature = "protobuf-codec", feature = "protobufv3-codec"))]
 pub use crate::codec::pb_codec::{de as pb_de, ser as pb_ser};
 #[cfg(feature = "prost-codec")]
 pub use crate::codec::pr_codec::{de as pr_de, ser as pr_ser};
 
-pub use crate::auth_context::{AuthContext, AuthProperty, AuthPropertyIter};
 pub use crate::codec::{Marshaller, MAX_MESSAGE_SIZE};
 pub use crate::env::{EnvBuilder, Environment};
 pub use crate::error::{Error, Result};
 pub use crate::log_util::redirect_log;
 pub use crate::metadata::{Metadata, MetadataBuilder, MetadataIter};
 pub use crate::quota::ResourceQuota;
-#[cfg(feature = "secure")]
-pub use crate::security::{
-    CertificateRequestType, ChannelCredentials, ChannelCredentialsBuilder, ServerCredentials,
-    ServerCredentialsBuilder, ServerCredentialsFetcher,
-};
+pub use crate::security::*;
 pub use crate::server::{
     CheckResult, Server, ServerBuilder, ServerChecker, Service, ServiceBuilder, ShutdownFuture,
 };
