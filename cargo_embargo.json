@@ -1,7 +1,4 @@
 {
-  "apex_available": [
-    "//apex_available:platform"
-  ],
   "features": [
     "_secure",
     "boringssl",
